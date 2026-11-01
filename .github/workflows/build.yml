@@ -21,13 +21,20 @@ jobs:
       - name: Instalar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '7.6.4'
 
-      - name: Compilar APK
+      - name: Compilar APKs
         run: gradle assembleDebug --no-daemon
 
-      - name: Guardar APK
+      - name: Reunir APKs
+        run: |
+          mkdir -p salida
+          cp app/build/outputs/apk/debug/app-debug.apk salida/
+          cp t1/build/outputs/apk/debug/t1-debug.apk salida/
+          cp t2/build/outputs/apk/debug/t2-debug.apk salida/
+
+      - name: Guardar APKs
         uses: actions/upload-artifact@v4
         with:
           name: CarroLauncher-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: salida/
