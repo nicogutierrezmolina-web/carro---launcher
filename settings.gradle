@@ -14,5 +14,7 @@ dependencyResolutionManagement {
 }
 rootProject.name = "CarroLauncher"
 include ':app'
-include ':t1'
-include ':t2'
+include ':appsh'
+include ':t3'
+include ':t4'
+include ':t5'
