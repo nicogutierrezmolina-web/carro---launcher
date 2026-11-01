@@ -29,9 +29,10 @@ jobs:
       - name: Reunir APKs
         run: |
           mkdir -p salida
-          cp app/build/outputs/apk/debug/app-debug.apk salida/
-          cp t1/build/outputs/apk/debug/t1-debug.apk salida/
-          cp t2/build/outputs/apk/debug/t2-debug.apk salida/
+          cp appsh/build/outputs/apk/debug/appsh-debug.apk salida/
+          cp t3/build/outputs/apk/debug/t3-debug.apk salida/
+          cp t4/build/outputs/apk/debug/t4-debug.apk salida/
+          cp t5/build/outputs/apk/debug/t5-debug.apk salida/
 
       - name: Guardar APKs
         uses: actions/upload-artifact@v4
