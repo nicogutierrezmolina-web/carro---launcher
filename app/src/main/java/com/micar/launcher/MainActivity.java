@@ -10,9 +10,14 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.CornerPathEffect;
 import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
+import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -20,13 +25,19 @@ import android.graphics.drawable.StateListDrawable;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
+import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
 import android.widget.BaseAdapter;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -44,34 +55,51 @@ import java.util.Locale;
 public class MainActivity extends Activity implements LocationListener {
 
     private static final int SLOTS = 6;
+    private static final int SLOT_NAV = 0;
+    private static final int SLOT_MUSIC = 2;
     private static final String[] DEFAULT_NAMES = {
             "Navi", "Radio", "Música", "Vídeo", "Bluetooth", "Info del Coche"
     };
 
-    private static final int COLOR_BG_1 = 0xFF0B0B0D;
-    private static final int COLOR_BG_2 = 0xFF1C060A;
-    private static final int COLOR_TILE = 0xFF18181D;
-    private static final int COLOR_TILE_PRESSED = 0xFF5A0F18;
-    private static final int COLOR_RED = 0xFFE11D2E;
-    private static final int COLOR_BORDER = 0xFF3A1015;
+    // Colores del tema rojo
+    private static final int BG_TOP = 0xFF8A0B17;
+    private static final int BG_BOTTOM = 0xFF2A0307;
+    private static final int CARD_FILL = 0x8C000000;
+    private static final int CARD_FILL_PRESSED = 0xB3500010;
+    private static final int CARD_BORDER = 0x66FF6B78;
+    private static final int RED = 0xFFE11D2E;
+    private static final int RED_LIGHT = 0xFFFF4D5E;
+    private static final int TEXT_SOFT = 0xFFE9B9BE;
 
     private PackageManager pm;
     private SharedPreferences prefs;
+    private float scale = 1f;
 
-    private TextView speedView;
-    private final LinearLayout[] tiles = new LinearLayout[SLOTS];
+    private GaugeView gauge;
     private final ImageView[] icons = new ImageView[SLOTS];
     private final TextView[] labels = new TextView[SLOTS];
+    private ImageView musicIcon;
+    private TextView musicLabel;
+    private TextView navLabel;
 
     private interface OnPick {
         void pick(ResolveInfo ri);
     }
+
+    // ------------------------------------------------------------------
+    // Ciclo de vida
+    // ------------------------------------------------------------------
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         pm = getPackageManager();
         prefs = getSharedPreferences("launcher", MODE_PRIVATE);
+
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        float shortSideDp = Math.min(dm.widthPixels, dm.heightPixels) / dm.density;
+        scale = Math.max(0.6f, Math.min(1.5f, shortSideDp / 420f));
+
         autoDetectFirstRun();
         buildUi();
         refreshTiles();
@@ -93,79 +121,143 @@ public class MainActivity extends Activity implements LocationListener {
 
     @Override
     public void onBackPressed() {
-        // Un launcher no debe cerrarse con el boton atras.
+        // Un launcher no se cierra con "atras".
+    }
+
+    // ------------------------------------------------------------------
+    // Utilidades de tamano
+    // ------------------------------------------------------------------
+
+    private int dp(float v) {
+        return (int) (v * getResources().getDisplayMetrics().density * scale + 0.5f);
+    }
+
+    private float sp(float v) {
+        return v * scale;
+    }
+
+    private TextView text(String s, float sizeSp, int color, boolean bold) {
+        TextView tv = new TextView(this);
+        tv.setText(s);
+        tv.setTextColor(color);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(sizeSp));
+        if (bold) tv.setTypeface(Typeface.DEFAULT_BOLD);
+        return tv;
+    }
+
+    private View spacer() {
+        return new View(this);
+    }
+
+    private Drawable cardBg(int radius) {
+        GradientDrawable normal = new GradientDrawable();
+        normal.setColor(CARD_FILL);
+        normal.setCornerRadius(radius);
+        normal.setStroke(Math.max(1, dp(1)), CARD_BORDER);
+
+        GradientDrawable pressed = new GradientDrawable();
+        pressed.setColor(CARD_FILL_PRESSED);
+        pressed.setCornerRadius(radius);
+        pressed.setStroke(Math.max(2, dp(2)), RED_LIGHT);
+
+        StateListDrawable sl = new StateListDrawable();
+        sl.addState(new int[]{android.R.attr.state_pressed}, pressed);
+        sl.addState(new int[]{}, normal);
+        return sl;
+    }
+
+    private Drawable ovalBg(int normalColor, int pressedColor) {
+        GradientDrawable normal = new GradientDrawable();
+        normal.setShape(GradientDrawable.OVAL);
+        normal.setColor(normalColor);
+        GradientDrawable pressed = new GradientDrawable();
+        pressed.setShape(GradientDrawable.OVAL);
+        pressed.setColor(pressedColor);
+        StateListDrawable sl = new StateListDrawable();
+        sl.addState(new int[]{android.R.attr.state_pressed}, pressed);
+        sl.addState(new int[]{}, normal);
+        return sl;
     }
 
     // ------------------------------------------------------------------
     // Interfaz
     // ------------------------------------------------------------------
 
-    private int dp(int v) {
-        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
-    }
-
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(10), dp(16), dp(10));
-        GradientDrawable bg = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR, new int[]{COLOR_BG_1, COLOR_BG_2});
-        root.setBackground(bg);
+        root.setPadding(dp(16), dp(8), dp(16), dp(6));
+        root.setBackground(new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM, new int[]{BG_TOP, BG_BOTTOM}));
 
-        // ---- Barra superior ----
+        root.addView(buildTopBar(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout main = new LinearLayout(this);
+        main.setOrientation(LinearLayout.HORIZONTAL);
+        main.addView(buildMusicCard(), cardParams(1.15f));
+        main.addView(buildGaugeCard(), cardParams(1.0f));
+        main.addView(buildNavCard(), cardParams(1.15f));
+        LinearLayout.LayoutParams mainLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        mainLp.topMargin = dp(8);
+        mainLp.bottomMargin = dp(8);
+        root.addView(main, mainLp);
+
+        root.addView(buildShortcutRow(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(78)));
+
+        TextView hint = text("Mantén presionado un botón para cambiar su aplicación",
+                11, 0xFFC98A90, false);
+        hint.setGravity(Gravity.CENTER);
+        root.addView(hint, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        setContentView(root);
+    }
+
+    private LinearLayout.LayoutParams cardParams(float weight) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, weight);
+        lp.leftMargin = dp(6);
+        lp.rightMargin = dp(6);
+        return lp;
+    }
+
+    private View buildTopBar() {
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
-
-        LinearLayout timeCol = new LinearLayout(this);
-        timeCol.setOrientation(LinearLayout.VERTICAL);
 
         TextClock clock = new TextClock(this);
         clock.setFormat24Hour("HH:mm");
         clock.setFormat12Hour("HH:mm");
         clock.setTextColor(Color.WHITE);
-        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, 44);
-        clock.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        timeCol.addView(clock);
+        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(36));
+        clock.setTypeface(Typeface.DEFAULT_BOLD);
+        top.addView(clock);
 
         TextClock date = new TextClock(this);
         date.setFormat24Hour("EEEE d 'de' MMMM");
         date.setFormat12Hour("EEEE d 'de' MMMM");
-        date.setTextColor(0xFFAAAAAA);
-        date.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        timeCol.addView(date);
-
-        top.addView(timeCol, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        date.setTextColor(TEXT_SOFT);
+        date.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(15));
+        date.setPadding(dp(14), 0, 0, 0);
+        top.addView(date);
 
         top.addView(spacer(), new LinearLayout.LayoutParams(0, 1, 1f));
 
-        LinearLayout speedCol = new LinearLayout(this);
-        speedCol.setOrientation(LinearLayout.HORIZONTAL);
-        speedCol.setGravity(Gravity.BOTTOM);
-        speedView = new TextView(this);
-        speedView.setText("--");
-        speedView.setTextColor(COLOR_RED);
-        speedView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 54);
-        speedView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        speedCol.addView(speedView);
-        TextView unit = new TextView(this);
-        unit.setText(" km/h");
-        unit.setTextColor(0xFFAAAAAA);
-        unit.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-        unit.setPadding(0, 0, 0, dp(10));
-        speedCol.addView(unit);
-        top.addView(speedCol);
+        TextView brand = text("CHANGAN  ALSVIN", 14, 0xFFFFC9CE, true);
+        brand.setLetterSpacing(0.25f);
+        top.addView(brand);
 
         top.addView(spacer(), new LinearLayout.LayoutParams(0, 1, 1f));
 
-        TextView orig = new TextView(this);
-        orig.setText("Launcher original");
-        orig.setTextColor(Color.WHITE);
-        orig.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        TextView orig = text("Launcher original", 14, Color.WHITE, false);
         orig.setGravity(Gravity.CENTER);
-        orig.setPadding(dp(18), dp(12), dp(18), dp(12));
-        orig.setBackground(tileBg(dp(14)));
+        orig.setPadding(dp(16), dp(8), dp(16), dp(8));
+        orig.setBackground(cardBg(dp(16)));
+        orig.setClickable(true);
         orig.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -173,25 +265,159 @@ public class MainActivity extends Activity implements LocationListener {
             }
         });
         top.addView(orig);
+        return top;
+    }
 
-        root.addView(top, new LinearLayout.LayoutParams(
+    // ---- Tarjeta de musica ----
+
+    private View buildMusicCard() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        card.setBackground(cardBg(dp(22)));
+        card.setClickable(true);
+
+        card.addView(text("Música", 17, Color.WHITE, true));
+
+        LinearLayout mid = new LinearLayout(this);
+        mid.setOrientation(LinearLayout.VERTICAL);
+        mid.setGravity(Gravity.CENTER);
+        musicIcon = new ImageView(this);
+        musicIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        mid.addView(musicIcon, new LinearLayout.LayoutParams(dp(60), dp(60)));
+        musicLabel = text("", 14, TEXT_SOFT, false);
+        musicLabel.setGravity(Gravity.CENTER);
+        musicLabel.setPadding(0, dp(6), 0, 0);
+        mid.addView(musicLabel);
+        card.addView(mid, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER);
+        controls.addView(makeControl(0, KeyEvent.KEYCODE_MEDIA_PREVIOUS, dp(46)));
+        controls.addView(makeControl(1, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, dp(58)));
+        controls.addView(makeControl(2, KeyEvent.KEYCODE_MEDIA_NEXT, dp(46)));
+        card.addView(controls, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // ---- Fila de botones ----
+        card.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onSlotClick(SLOT_MUSIC);
+            }
+        });
+        card.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                chooseAppForSlot(SLOT_MUSIC);
+                return true;
+            }
+        });
+        return card;
+    }
+
+    private View makeControl(int type, final int keyCode, int size) {
+        ControlView cv = new ControlView(this, type);
+        if (type == 1) {
+            cv.setBackground(ovalBg(RED, 0xFF8A0B17));
+        } else {
+            cv.setBackground(ovalBg(0x33FFFFFF, 0x66FFFFFF));
+        }
+        cv.setClickable(true);
+        cv.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                sendMediaKey(keyCode);
+            }
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
+        lp.leftMargin = dp(8);
+        lp.rightMargin = dp(8);
+        cv.setLayoutParams(lp);
+        return cv;
+    }
+
+    private void sendMediaKey(int keyCode) {
+        try {
+            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            long t = SystemClock.uptimeMillis();
+            am.dispatchMediaKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, keyCode, 0));
+            am.dispatchMediaKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP, keyCode, 0));
+        } catch (Exception e) {
+            Toast.makeText(this, "No se pudo enviar el comando", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    // ---- Tarjeta velocimetro ----
+
+    private View buildGaugeCard() {
+        FrameLayout card = new FrameLayout(this);
+        card.setPadding(dp(8), dp(8), dp(8), dp(8));
+        card.setBackground(cardBg(dp(22)));
+        gauge = new GaugeView(this);
+        try {
+            gauge.setCar(BitmapFactory.decodeResource(getResources(), R.drawable.auto));
+        } catch (Throwable t) {
+            // sin imagen del auto: se muestra solo el velocimetro
+        }
+        card.addView(gauge, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return card;
+    }
+
+    // ---- Tarjeta navegacion ----
+
+    private View buildNavCard() {
+        FrameLayout card = new FrameLayout(this);
+        card.setClickable(true);
+        card.addView(new NavBgView(this), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setPadding(dp(16), 0, dp(16), dp(12));
+        info.addView(text("Navegación", 19, Color.WHITE, true));
+        navLabel = text("", 13, TEXT_SOFT, false);
+        navLabel.setSingleLine(true);
+        info.addView(navLabel);
+        FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.START);
+        card.addView(info, ilp);
+
+        card.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onSlotClick(SLOT_NAV);
+            }
+        });
+        card.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                chooseAppForSlot(SLOT_NAV);
+                return true;
+            }
+        });
+        return card;
+    }
+
+    // ---- Fila de accesos ----
+
+    private View buildShortcutRow() {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        rowLp.topMargin = dp(10);
-        rowLp.bottomMargin = dp(6);
 
         for (int i = 0; i < SLOTS; i++) {
             final int slot = i;
             LinearLayout tile = makeTile();
             ImageView iv = new ImageView(this);
             iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            tile.addView(iv, new LinearLayout.LayoutParams(dp(72), dp(72)));
-            TextView tv = makeLabel();
+            tile.addView(iv, new LinearLayout.LayoutParams(dp(38), dp(38)));
+            TextView tv = text("", 13, Color.WHITE, false);
+            tv.setGravity(Gravity.CENTER);
+            tv.setSingleLine(true);
+            tv.setPadding(dp(2), dp(4), dp(2), 0);
             tile.addView(tv);
 
             tile.setOnClickListener(new View.OnClickListener() {
@@ -207,18 +433,16 @@ public class MainActivity extends Activity implements LocationListener {
                     return true;
                 }
             });
-
-            tiles[i] = tile;
             icons[i] = iv;
             labels[i] = tv;
             row.addView(tile, tileParams());
         }
 
-        // Boton "Apps" (todas las aplicaciones)
         LinearLayout appsTile = makeTile();
-        appsTile.addView(new DotsView(this), new LinearLayout.LayoutParams(dp(72), dp(72)));
-        TextView appsLabel = makeLabel();
-        appsLabel.setText("Apps");
+        appsTile.addView(new DotsView(this), new LinearLayout.LayoutParams(dp(38), dp(38)));
+        TextView appsLabel = text("Apps", 13, Color.WHITE, false);
+        appsLabel.setGravity(Gravity.CENTER);
+        appsLabel.setPadding(dp(2), dp(4), dp(2), 0);
         appsTile.addView(appsLabel);
         appsTile.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -227,30 +451,15 @@ public class MainActivity extends Activity implements LocationListener {
             }
         });
         row.addView(appsTile, tileParams());
-
-        root.addView(row, rowLp);
-
-        TextView hint = new TextView(this);
-        hint.setText("Mantén presionado un botón para cambiar su aplicación");
-        hint.setTextColor(0xFF777777);
-        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        hint.setGravity(Gravity.CENTER);
-        root.addView(hint, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        setContentView(root);
-    }
-
-    private View spacer() {
-        return new View(this);
+        return row;
     }
 
     private LinearLayout makeTile() {
         LinearLayout t = new LinearLayout(this);
         t.setOrientation(LinearLayout.VERTICAL);
         t.setGravity(Gravity.CENTER);
-        t.setPadding(dp(6), dp(6), dp(6), dp(6));
-        t.setBackground(tileBg(dp(22)));
+        t.setPadding(dp(4), dp(4), dp(4), dp(4));
+        t.setBackground(cardBg(dp(18)));
         t.setClickable(true);
         return t;
     }
@@ -263,32 +472,9 @@ public class MainActivity extends Activity implements LocationListener {
         return lp;
     }
 
-    private TextView makeLabel() {
-        TextView tv = new TextView(this);
-        tv.setTextColor(Color.WHITE);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-        tv.setGravity(Gravity.CENTER);
-        tv.setMaxLines(2);
-        tv.setPadding(0, dp(8), 0, 0);
-        return tv;
-    }
-
-    private Drawable tileBg(int radius) {
-        GradientDrawable normal = new GradientDrawable();
-        normal.setColor(COLOR_TILE);
-        normal.setCornerRadius(radius);
-        normal.setStroke(dp(1), COLOR_BORDER);
-
-        GradientDrawable pressed = new GradientDrawable();
-        pressed.setColor(COLOR_TILE_PRESSED);
-        pressed.setCornerRadius(radius);
-        pressed.setStroke(dp(2), COLOR_RED);
-
-        StateListDrawable sl = new StateListDrawable();
-        sl.addState(new int[]{android.R.attr.state_pressed}, pressed);
-        sl.addState(new int[]{}, normal);
-        return sl;
-    }
+    // ------------------------------------------------------------------
+    // Vistas dibujadas a mano (livianas)
+    // ------------------------------------------------------------------
 
     /** Icono de 9 puntos para el boton "Apps". */
     private static class DotsView extends View {
@@ -306,11 +492,222 @@ public class MainActivity extends Activity implements LocationListener {
             float r = Math.min(w, h) / 12f;
             for (int x = 0; x < 3; x++) {
                 for (int y = 0; y < 3; y++) {
-                    float cx = w * (0.25f + 0.25f * x);
-                    float cy = h * (0.25f + 0.25f * y);
-                    canvas.drawCircle(cx, cy, r, paint);
+                    canvas.drawCircle(w * (0.25f + 0.25f * x), h * (0.25f + 0.25f * y), r, paint);
                 }
             }
+        }
+    }
+
+    /** Botones anterior / reproducir / siguiente. */
+    private static class ControlView extends View {
+        private final int type;
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+
+        ControlView(Context c, int type) {
+            super(c);
+            this.type = type;
+            p.setColor(Color.WHITE);
+            p.setStyle(Paint.Style.FILL);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float w = getWidth();
+            float h = getHeight();
+            float cx = w / 2f;
+            float cy = h / 2f;
+            float s = Math.min(w, h) * 0.2f;
+            path.reset();
+            if (type == 1) {
+                path.moveTo(cx - s * 0.7f, cy - s * 1.1f);
+                path.lineTo(cx + s * 1.1f, cy);
+                path.lineTo(cx - s * 0.7f, cy + s * 1.1f);
+                path.close();
+            } else if (type == 0) {
+                canvas.drawRect(cx - s * 1.1f, cy - s, cx - s * 0.6f, cy + s, p);
+                path.moveTo(cx + s * 1.1f, cy - s);
+                path.lineTo(cx - s * 0.4f, cy);
+                path.lineTo(cx + s * 1.1f, cy + s);
+                path.close();
+            } else {
+                canvas.drawRect(cx + s * 0.6f, cy - s, cx + s * 1.1f, cy + s, p);
+                path.moveTo(cx - s * 1.1f, cy - s);
+                path.lineTo(cx + s * 0.4f, cy);
+                path.lineTo(cx - s * 1.1f, cy + s);
+                path.close();
+            }
+            canvas.drawPath(path, p);
+        }
+    }
+
+    /** Velocimetro: arco con la velocidad actual. */
+    private static class GaugeView extends View {
+        private static final float MAX_SPEED = 200f;
+        private final Paint track = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint prog = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint tick = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint num = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint small = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint bmpPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        private final RectF oval = new RectF();
+        private final RectF carRect = new RectF();
+        private Bitmap car;
+        private int speed = 0;
+        private boolean fix = false;
+
+        void setCar(Bitmap b) {
+            car = b;
+            invalidate();
+        }
+
+        GaugeView(Context c) {
+            super(c);
+            track.setStyle(Paint.Style.STROKE);
+            track.setColor(0x33FFFFFF);
+            track.setStrokeCap(Paint.Cap.ROUND);
+            prog.setStyle(Paint.Style.STROKE);
+            prog.setColor(RED_LIGHT);
+            prog.setStrokeCap(Paint.Cap.ROUND);
+            tick.setStyle(Paint.Style.STROKE);
+            tick.setColor(0x66FFFFFF);
+            num.setColor(Color.WHITE);
+            num.setTextAlign(Paint.Align.CENTER);
+            num.setTypeface(Typeface.DEFAULT_BOLD);
+            small.setColor(TEXT_SOFT);
+            small.setTextAlign(Paint.Align.CENTER);
+        }
+
+        void setSpeed(int s, boolean hasFix) {
+            if (s != speed || hasFix != fix) {
+                speed = s;
+                fix = hasFix;
+                invalidate();
+            }
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float w = getWidth();
+            float h = getHeight();
+            float cx = w / 2f;
+            float cy = h / 2f;
+            float r = Math.min(w, h) / 2f - Math.min(w, h) * 0.08f;
+            float sw = r * 0.13f;
+            track.setStrokeWidth(sw);
+            prog.setStrokeWidth(sw);
+            tick.setStrokeWidth(Math.max(2f, r * 0.015f));
+
+            float half = sw / 2f;
+            oval.set(cx - r + half, cy - r + half, cx + r - half, cy + r - half);
+            canvas.drawArc(oval, 135f, 270f, false, track);
+            float frac = Math.max(0f, Math.min(1f, speed / MAX_SPEED));
+            if (frac > 0f) canvas.drawArc(oval, 135f, 270f * frac, false, prog);
+
+            // marcas cada 20 km/h dentro del arco
+            for (int v = 0; v <= 200; v += 20) {
+                double ang = Math.toRadians(135.0 + 270.0 * v / MAX_SPEED);
+                float r1 = r - sw - r * 0.05f;
+                float r2 = r1 - r * 0.09f;
+                canvas.drawLine(
+                        cx + (float) Math.cos(ang) * r1, cy + (float) Math.sin(ang) * r1,
+                        cx + (float) Math.cos(ang) * r2, cy + (float) Math.sin(ang) * r2, tick);
+            }
+
+            String value = fix ? String.valueOf(speed) : "--";
+            if (car != null && car.getWidth() > 0) {
+                // numero arriba, auto abajo, todo dentro del arco
+                num.setTextSize(r * 0.5f);
+                canvas.drawText(value, cx, cy - r * 0.14f, num);
+                small.setTextSize(r * 0.15f);
+                canvas.drawText(fix ? "km/h" : "Sin GPS", cx, cy + r * 0.03f, small);
+                float cw = r * 1.25f;
+                float ch = cw * car.getHeight() / car.getWidth();
+                float top = cy + r * 0.14f;
+                carRect.set(cx - cw / 2f, top, cx + cw / 2f, top + ch);
+                canvas.drawBitmap(car, null, carRect, bmpPaint);
+            } else {
+                num.setTextSize(r * 0.78f);
+                canvas.drawText(value, cx, cy + r * 0.22f, num);
+                small.setTextSize(r * 0.2f);
+                canvas.drawText("km/h", cx, cy + r * 0.48f, small);
+                small.setTextSize(r * 0.16f);
+                canvas.drawText(fix ? "GPS" : "Sin GPS", cx, cy + r * 0.88f, small);
+            }
+        }
+    }
+
+    /** Fondo decorativo de la tarjeta de navegacion (no es un mapa real). */
+    private static class NavBgView extends View {
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint grid = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint route = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint dot = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint border = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF rect = new RectF();
+        private final Path clip = new Path();
+        private final Path rp = new Path();
+
+        NavBgView(Context c) {
+            super(c);
+            fill.setStyle(Paint.Style.FILL);
+            grid.setStyle(Paint.Style.STROKE);
+            grid.setColor(0x22FFFFFF);
+            route.setStyle(Paint.Style.STROKE);
+            route.setColor(RED_LIGHT);
+            route.setStrokeCap(Paint.Cap.ROUND);
+            route.setStrokeJoin(Paint.Join.ROUND);
+            dot.setStyle(Paint.Style.FILL);
+            border.setStyle(Paint.Style.STROKE);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float w = getWidth();
+            float h = getHeight();
+            float rad = Math.min(w, h) * 0.1f;
+            float b = Math.max(2f, h * 0.006f);
+            rect.set(b, b, w - b, h - b);
+
+            fill.setColor(isPressed() ? CARD_FILL_PRESSED : CARD_FILL);
+            canvas.drawRoundRect(rect, rad, rad, fill);
+
+            canvas.save();
+            clip.reset();
+            clip.addRoundRect(rect, rad, rad, Path.Direction.CW);
+            canvas.clipPath(clip);
+
+            grid.setStrokeWidth(Math.max(2f, h * 0.012f));
+            for (int i = 1; i < 6; i++) {
+                canvas.drawLine(w * i / 6f, 0, w * i / 6f, h, grid);
+            }
+            for (int i = 1; i < 5; i++) {
+                canvas.drawLine(0, h * i / 5f, w, h * i / 5f, grid);
+            }
+            canvas.drawLine(0, h * 0.9f, w * 0.8f, 0, grid);
+
+            route.setStrokeWidth(Math.max(4f, h * 0.035f));
+            route.setPathEffect(new CornerPathEffect(h * 0.06f));
+            rp.reset();
+            rp.moveTo(w * 0.10f, h * 0.62f);
+            rp.lineTo(w * 0.35f, h * 0.62f);
+            rp.lineTo(w * 0.35f, h * 0.38f);
+            rp.lineTo(w * 0.62f, h * 0.38f);
+            rp.lineTo(w * 0.62f, h * 0.18f);
+            rp.lineTo(w * 0.88f, h * 0.18f);
+            canvas.drawPath(rp, route);
+
+            dot.setColor(Color.WHITE);
+            canvas.drawCircle(w * 0.10f, h * 0.62f, h * 0.035f, dot);
+            dot.setColor(RED);
+            canvas.drawCircle(w * 0.88f, h * 0.18f, h * 0.06f, dot);
+            dot.setColor(Color.WHITE);
+            canvas.drawCircle(w * 0.88f, h * 0.18f, h * 0.025f, dot);
+            canvas.restore();
+
+            border.setStrokeWidth(isPressed() ? Math.max(3f, h * 0.012f) : b);
+            border.setColor(isPressed() ? RED_LIGHT : CARD_BORDER);
+            canvas.drawRoundRect(rect, rad, rad, border);
         }
     }
 
@@ -319,7 +716,7 @@ public class MainActivity extends Activity implements LocationListener {
         Bitmap bmp = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(bmp);
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        p.setColor(0xFF888888);
+        p.setColor(0xFFC98A90);
         p.setStrokeWidth(8f);
         p.setStrokeCap(Paint.Cap.ROUND);
         c.drawLine(s / 2f, 24, s / 2f, s - 24, p);
@@ -331,23 +728,31 @@ public class MainActivity extends Activity implements LocationListener {
     // Botones configurables
     // ------------------------------------------------------------------
 
+    private boolean loadSlot(int i, ImageView iv, TextView tv) {
+        ComponentName cn = getSlot(i);
+        if (cn != null) {
+            try {
+                iv.setImageDrawable(pm.getActivityIcon(cn));
+                tv.setText(pm.getActivityInfo(cn, 0).loadLabel(pm));
+                return true;
+            } catch (PackageManager.NameNotFoundException e) {
+                // la app ya no existe
+            }
+        }
+        iv.setImageDrawable(plusDrawable());
+        tv.setText(DEFAULT_NAMES[i]);
+        return false;
+    }
+
     private void refreshTiles() {
         for (int i = 0; i < SLOTS; i++) {
-            ComponentName cn = getSlot(i);
-            boolean ok = false;
-            if (cn != null) {
-                try {
-                    icons[i].setImageDrawable(pm.getActivityIcon(cn));
-                    labels[i].setText(pm.getActivityInfo(cn, 0).loadLabel(pm));
-                    ok = true;
-                } catch (PackageManager.NameNotFoundException e) {
-                    ok = false;
-                }
-            }
-            if (!ok) {
-                icons[i].setImageDrawable(plusDrawable());
-                labels[i].setText(DEFAULT_NAMES[i]);
-            }
+            loadSlot(i, icons[i], labels[i]);
+        }
+        if (!loadSlot(SLOT_MUSIC, musicIcon, musicLabel)) {
+            musicLabel.setText("Toca para elegir tu app de música");
+        }
+        if (!loadSlot(SLOT_NAV, new ImageView(this), navLabel)) {
+            navLabel.setText("Toca para elegir tu app de mapas");
         }
     }
 
@@ -474,9 +879,9 @@ public class MainActivity extends Activity implements LocationListener {
                 .setView(lv)
                 .setNegativeButton("Cerrar", null)
                 .create();
-        lv.setOnItemClickListener(new android.widget.AdapterView.OnItemClickListener() {
+        lv.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
-            public void onItemClick(android.widget.AdapterView<?> parent, View view, int pos, long id) {
+            public void onItemClick(AdapterView<?> parent, View view, int pos, long id) {
                 dialog.dismiss();
                 cb.pick(items.get(pos));
             }
@@ -517,10 +922,10 @@ public class MainActivity extends Activity implements LocationListener {
                 row.setGravity(Gravity.CENTER_VERTICAL);
                 row.setPadding(dp(12), dp(8), dp(12), dp(8));
                 iv = new ImageView(MainActivity.this);
-                row.addView(iv, new LinearLayout.LayoutParams(dp(48), dp(48)));
+                row.addView(iv, new LinearLayout.LayoutParams(dp(44), dp(44)));
                 tv = new TextView(MainActivity.this);
-                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
-                tv.setPadding(dp(16), 0, 0, 0);
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(20));
+                tv.setPadding(dp(14), 0, 0, 0);
                 row.addView(tv);
             } else {
                 row = (LinearLayout) convertView;
@@ -619,14 +1024,10 @@ public class MainActivity extends Activity implements LocationListener {
 
     @Override
     public void onLocationChanged(Location loc) {
-        if (loc == null || speedView == null) return;
-        if (!loc.hasSpeed()) {
-            speedView.setText("0");
-            return;
-        }
-        long kmh = Math.round(loc.getSpeed() * 3.6f);
+        if (loc == null || gauge == null) return;
+        long kmh = loc.hasSpeed() ? Math.round(loc.getSpeed() * 3.6f) : 0;
         if (kmh < 2) kmh = 0;
-        speedView.setText(String.valueOf(kmh));
+        gauge.setSpeed((int) kmh, true);
     }
 
     @Override
@@ -639,6 +1040,6 @@ public class MainActivity extends Activity implements LocationListener {
 
     @Override
     public void onProviderDisabled(String provider) {
-        if (speedView != null) speedView.setText("--");
+        if (gauge != null) gauge.setSpeed(0, false);
     }
 }
