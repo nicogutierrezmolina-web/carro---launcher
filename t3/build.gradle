@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace 'com.micar.t3'
+    namespace 'com.micar.launcher'
     compileSdk 33
 
     defaultConfig {
@@ -12,6 +12,13 @@ android {
         targetSdk 23
         versionCode 1
         versionName '1.0'
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs = ['../app/src/main/java']
+            res.srcDirs = ['../app/src/main/res']
+        }
     }
 
     signingConfigs {

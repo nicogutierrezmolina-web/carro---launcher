@@ -3,7 +3,10 @@ package com.micar.launcher;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.IntentFilter;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -29,6 +32,7 @@ import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -41,6 +45,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ScrollView;
 import android.widget.TextClock;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -79,8 +84,50 @@ public class MainActivity extends Activity implements LocationListener {
     private final ImageView[] icons = new ImageView[SLOTS];
     private final TextView[] labels = new TextView[SLOTS];
     private ImageView musicIcon;
-    private TextView musicLabel;
+    private TextView musicTitle;
+    private TextView musicSub;
+    private String musicAppLabel = "";
     private TextView navLabel;
+    private String navHint = "";
+    private TextView activatePill;
+
+    private String rxTitle = null;
+    private String rxArtist = null;
+    private String rxAction = null;
+
+    private static final String[] MUSIC_ACTIONS = {
+            "com.android.music.metachanged",
+            "com.android.music.playstatechanged",
+            "com.android.music.queuechanged",
+            "com.spotify.music.metadatachanged",
+            "com.htc.music.metachanged",
+            "com.miui.player.metachanged",
+            "com.sec.android.app.music.metachanged",
+            "com.amazon.mp3.metachanged",
+            "com.andrew.apollo.metachanged",
+            "com.maxmpz.audioplayer.metachanged",
+            "com.sonyericsson.music.metachanged"
+    };
+
+    private final NotifService.Listener svcListener = new NotifService.Listener() {
+        @Override
+        public void onChanged() {
+            updateMusicUi();
+            updateNavUi();
+        }
+    };
+
+    private final BroadcastReceiver musicRx = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            String t = firstExtra(i, "track", "title", "song", "name");
+            if (t == null || t.length() == 0) return;
+            rxTitle = t;
+            rxArtist = firstExtra(i, "artist", "artist_name", "singer");
+            rxAction = i.getAction();
+            updateMusicUi();
+        }
+    };
 
     private interface OnPick {
         void pick(ResolveInfo ri);
@@ -111,12 +158,29 @@ public class MainActivity extends Activity implements LocationListener {
         super.onResume();
         refreshTiles();
         startGps();
+        NotifService.setListener(svcListener);
+        try {
+            IntentFilter f = new IntentFilter();
+            for (String a : MUSIC_ACTIONS) f.addAction(a);
+            registerReceiver(musicRx, f);
+        } catch (Exception e) {
+            // sin receptor de musica
+        }
+        updateMusicUi();
+        updateNavUi();
+        updatePill();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         stopGps();
+        NotifService.setListener(null);
+        try {
+            unregisterReceiver(musicRx);
+        } catch (Exception e) {
+            // no estaba registrado
+        }
     }
 
     @Override
@@ -249,22 +313,47 @@ public class MainActivity extends Activity implements LocationListener {
 
         TextView brand = text("CHANGAN  ALSVIN", 14, 0xFFFFC9CE, true);
         brand.setLetterSpacing(0.25f);
+        brand.setPadding(dp(10), dp(6), dp(10), dp(6));
+        brand.setClickable(true);
+        brand.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                showDiagnostics();
+                return true;
+            }
+        });
         top.addView(brand);
 
         top.addView(spacer(), new LinearLayout.LayoutParams(0, 1, 1f));
 
-        TextView orig = text("Launcher original", 14, Color.WHITE, false);
-        orig.setGravity(Gravity.CENTER);
-        orig.setPadding(dp(16), dp(8), dp(16), dp(8));
-        orig.setBackground(cardBg(dp(16)));
-        orig.setClickable(true);
-        orig.setOnClickListener(new View.OnClickListener() {
+        activatePill = text("Activar canción y ruta", 14, Color.WHITE, false);
+        activatePill.setGravity(Gravity.CENTER);
+        activatePill.setPadding(dp(16), dp(8), dp(16), dp(8));
+        activatePill.setBackground(cardBg(dp(16)));
+        activatePill.setClickable(true);
+        activatePill.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                openOriginalLauncher();
+                openListenerSettings();
             }
         });
-        top.addView(orig);
+        LinearLayout.LayoutParams pillLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        pillLp.rightMargin = dp(10);
+        top.addView(activatePill, pillLp);
+
+        TextView home = text("Inicio", 14, Color.WHITE, false);
+        home.setGravity(Gravity.CENTER);
+        home.setPadding(dp(16), dp(8), dp(16), dp(8));
+        home.setBackground(cardBg(dp(16)));
+        home.setClickable(true);
+        home.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                goHome();
+            }
+        });
+        top.addView(home);
         return top;
     }
 
@@ -284,11 +373,18 @@ public class MainActivity extends Activity implements LocationListener {
         mid.setGravity(Gravity.CENTER);
         musicIcon = new ImageView(this);
         musicIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        mid.addView(musicIcon, new LinearLayout.LayoutParams(dp(60), dp(60)));
-        musicLabel = text("", 14, TEXT_SOFT, false);
-        musicLabel.setGravity(Gravity.CENTER);
-        musicLabel.setPadding(0, dp(6), 0, 0);
-        mid.addView(musicLabel);
+        mid.addView(musicIcon, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        musicTitle = text("", 18, Color.WHITE, true);
+        musicTitle.setGravity(Gravity.CENTER);
+        musicTitle.setMaxLines(2);
+        musicTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        musicTitle.setPadding(0, dp(6), 0, 0);
+        mid.addView(musicTitle);
+        musicSub = text("", 13, TEXT_SOFT, false);
+        musicSub.setGravity(Gravity.CENTER);
+        musicSub.setMaxLines(2);
+        musicSub.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        mid.addView(musicSub);
         card.addView(mid, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
@@ -379,7 +475,8 @@ public class MainActivity extends Activity implements LocationListener {
         info.setPadding(dp(16), 0, dp(16), dp(12));
         info.addView(text("Navegación", 19, Color.WHITE, true));
         navLabel = text("", 13, TEXT_SOFT, false);
-        navLabel.setSingleLine(true);
+        navLabel.setMaxLines(2);
+        navLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
         info.addView(navLabel);
         FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -617,13 +714,13 @@ public class MainActivity extends Activity implements LocationListener {
             String value = fix ? String.valueOf(speed) : "--";
             if (car != null && car.getWidth() > 0) {
                 // numero arriba, auto abajo, todo dentro del arco
-                num.setTextSize(r * 0.5f);
-                canvas.drawText(value, cx, cy - r * 0.14f, num);
-                small.setTextSize(r * 0.15f);
-                canvas.drawText(fix ? "km/h" : "Sin GPS", cx, cy + r * 0.03f, small);
-                float cw = r * 1.25f;
+                num.setTextSize(r * 0.46f);
+                canvas.drawText(value, cx, cy - r * 0.22f, num);
+                small.setTextSize(r * 0.13f);
+                canvas.drawText(fix ? "km/h" : "Sin GPS", cx, cy - r * 0.04f, small);
+                float cw = r * 1.4f;
                 float ch = cw * car.getHeight() / car.getWidth();
-                float top = cy + r * 0.14f;
+                float top = cy + r * 0.08f;
                 carRect.set(cx - cw / 2f, top, cx + cw / 2f, top + ch);
                 canvas.drawBitmap(car, null, carRect, bmpPaint);
             } else {
@@ -748,12 +845,21 @@ public class MainActivity extends Activity implements LocationListener {
         for (int i = 0; i < SLOTS; i++) {
             loadSlot(i, icons[i], labels[i]);
         }
-        if (!loadSlot(SLOT_MUSIC, musicIcon, musicLabel)) {
-            musicLabel.setText("Toca para elegir tu app de música");
+        TextView tmp = new TextView(this);
+        if (loadSlot(SLOT_MUSIC, musicIcon, tmp)) {
+            musicAppLabel = tmp.getText().toString();
+        } else {
+            musicAppLabel = "Toca para elegir tu app de música";
         }
-        if (!loadSlot(SLOT_NAV, new ImageView(this), navLabel)) {
-            navLabel.setText("Toca para elegir tu app de mapas");
+        TextView tmp2 = new TextView(this);
+        if (loadSlot(SLOT_NAV, new ImageView(this), tmp2)) {
+            navHint = "Abrir " + tmp2.getText();
+        } else {
+            navHint = "Toca para elegir tu app de mapas";
         }
+        updateMusicUi();
+        updateNavUi();
+        updatePill();
     }
 
     private ComponentName getSlot(int i) {
@@ -940,41 +1046,119 @@ public class MainActivity extends Activity implements LocationListener {
     }
 
     // ------------------------------------------------------------------
-    // Volver al launcher original de la radio
+    // Inicio, lectura de musica/ruta y diagnostico
     // ------------------------------------------------------------------
 
-    private void openOriginalLauncher() {
-        Intent h = new Intent(Intent.ACTION_MAIN);
-        h.addCategory(Intent.CATEGORY_HOME);
-        List<ResolveInfo> all = pm.queryIntentActivities(h, 0);
-        final List<ResolveInfo> others = new ArrayList<ResolveInfo>();
-        for (ResolveInfo ri : all) {
-            if (!getPackageName().equals(ri.activityInfo.packageName)) others.add(ri);
-        }
-        if (others.isEmpty()) {
-            Toast.makeText(this, "No se encontró otro launcher", Toast.LENGTH_LONG).show();
-        } else if (others.size() == 1) {
-            startHome(others.get(0));
-        } else {
-            showList("Elegir launcher original", others, new OnPick() {
-                @Override
-                public void pick(ResolveInfo ri) {
-                    startHome(ri);
-                }
-            });
+    private void goHome() {
+        try {
+            Intent h = new Intent(Intent.ACTION_MAIN);
+            h.addCategory(Intent.CATEGORY_HOME);
+            h.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(h);
+        } catch (Exception e) {
+            Toast.makeText(this, "No se pudo volver al inicio", Toast.LENGTH_LONG).show();
         }
     }
 
-    private void startHome(ResolveInfo ri) {
+    private boolean isListenerEnabled() {
         try {
-            Intent i = new Intent(Intent.ACTION_MAIN);
-            i.addCategory(Intent.CATEGORY_HOME);
-            i.setComponent(toComponent(ri));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(i);
+            String s = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
+            return s != null && s.contains(getPackageName());
         } catch (Exception e) {
-            Toast.makeText(this, "No se pudo abrir el launcher original", Toast.LENGTH_LONG).show();
+            return false;
         }
+    }
+
+    private void openListenerSettings() {
+        try {
+            startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"));
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this,
+                    "Tu radio no tiene esa pantalla de ajustes. Mantén presionado CHANGAN ALSVIN para ver el diagnóstico.",
+                    Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "No se pudo abrir los ajustes", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void updatePill() {
+        if (activatePill != null) {
+            activatePill.setVisibility(isListenerEnabled() ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private static String firstExtra(Intent i, String... keys) {
+        try {
+            Bundle b = i.getExtras();
+            if (b == null) return null;
+            for (String k : keys) {
+                Object o = b.get(k);
+                if (o instanceof CharSequence && ((CharSequence) o).length() > 0) {
+                    return o.toString();
+                }
+            }
+        } catch (Exception e) {
+            // nada
+        }
+        return null;
+    }
+
+    private void updateMusicUi() {
+        if (musicTitle == null || musicSub == null) return;
+        String t = NotifService.mediaTitle;
+        String a = NotifService.mediaArtist;
+        if (t == null || t.length() == 0) {
+            t = rxTitle;
+            a = rxArtist;
+        }
+        if (t != null && t.length() > 0) {
+            musicTitle.setText(t);
+            musicSub.setText(a != null && a.length() > 0 ? a : musicAppLabel);
+        } else {
+            musicTitle.setText(musicAppLabel);
+            musicSub.setText(isListenerEnabled()
+                    ? "Esperando música…"
+                    : "Activa la lectura para ver la canción");
+        }
+    }
+
+    private void updateNavUi() {
+        if (navLabel == null) return;
+        String t = NotifService.navText;
+        navLabel.setText(t != null && t.length() > 0 ? t : navHint);
+    }
+
+    private void showDiagnostics() {
+        ComponentName nav = getSlot(SLOT_NAV);
+        StringBuilder sb = new StringBuilder();
+        sb.append("Lectura de notificaciones: ")
+                .append(isListenerEnabled() ? "ACTIVADA" : "desactivada").append('\n');
+        sb.append("Servicio conectado: ").append(NotifService.connected ? "sí" : "no").append("\n\n");
+        sb.append("Sesiones de música:\n");
+        String ds = NotifService.debugSessions;
+        sb.append(ds == null || ds.length() == 0 ? "(ninguna)\n" : ds);
+        sb.append("\nAviso de música (broadcast): ");
+        sb.append(rxAction == null ? "(ninguno)" : rxAction + " → " + rxTitle).append("\n\n");
+        sb.append("App de navegación: ").append(nav == null ? "(sin elegir)" : nav.getPackageName()).append('\n');
+        sb.append("Texto leído: ").append(NotifService.navText == null ? "(nada)" : NotifService.navText);
+
+        TextView tv = new TextView(this);
+        tv.setText(sb.toString());
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tv.setPadding(dp(16), dp(10), dp(16), dp(10));
+        ScrollView sv = new ScrollView(this);
+        sv.addView(tv);
+        new AlertDialog.Builder(this, android.R.style.Theme_Holo_Dialog)
+                .setTitle("Diagnóstico")
+                .setView(sv)
+                .setPositiveButton("Abrir ajustes", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        openListenerSettings();
+                    }
+                })
+                .setNegativeButton("Cerrar", null)
+                .show();
     }
 
     // ------------------------------------------------------------------
