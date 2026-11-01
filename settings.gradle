@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "CarroLauncher"
 include ':app'
+include ':t1'
+include ':t2'

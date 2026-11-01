@@ -1,0 +1,32 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.micar.t2'
+    compileSdk 33
+
+    defaultConfig {
+        applicationId 'com.micar.t2'
+        minSdk 21
+        targetSdk 23
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        debug {
+            enableV1Signing true
+            enableV2Signing false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        abortOnError false
+    }
+}
