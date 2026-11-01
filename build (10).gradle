@@ -1,0 +1,43 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.micar.launcher'
+    compileSdk 33
+
+    defaultConfig {
+        applicationId 'com.micar.t3'
+        minSdk 21
+        targetSdk 23
+        versionCode 1
+        versionName '1.0'
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs = ['../app/src/main/java']
+            res.srcDirs = ['../app/src/main/res']
+        }
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file('../debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+            enableV1Signing true
+            enableV2Signing false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        abortOnError false
+    }
+}
